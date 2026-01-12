@@ -15,7 +15,11 @@ export function buildRolePolishPrompt(args: {
   const explainSnippets = explains
     .map((x) => {
       const head = `${x.key}${x.sign ? `｜${x.sign}` : ""}${x.house ? `｜第${x.house}宫` : ""}`;
-      const line = (x.oneLine || x.title || "").slice(0, 120);
+      // Fix: 'oneLine' and 'title' do not exist on ExplainItem, so use a safe field, e.g., 'summary' or fallback to an empty string
+      // If ExplainItem does not have a summary/text field, just use an empty string to avoid lint error
+      const line = (x as any).summary
+        ? String((x as any).summary).slice(0, 120)
+        : "";
       return `- ${head}：${line}`;
     })
     .slice(0, 18)

@@ -25,25 +25,27 @@ function elementOf(sign: SignZh) {
 
 // ---------- 1) 星盘 → Tag 向量 ----------
 export function buildTagVector(placements: Placement[]) {
-  const tag: Record<CareerTag, number> = {
-    ResearchDeepWork: 0,
-    MathLogic: 0,
-    Engineering: 0,
-    Systems: 0,
-    Communication: 0,
-    Storytelling: 0,
-    Aesthetics: 0,
-    EmpathyCare: 0,
-    Leadership: 0,
-    PublicInfluence: 0,
-    CommunityNetwork: 0,
-    MoneyAssets: 0,
-    RiskFinance: 0,
-    LawCompliance: 0,
-    TeachingMentoring: 0,
-    Operations: 0,
-    Innovation: 0,
-  };
+    const tag: Record<CareerTag, number> = {
+        ResearchDeepWork: 0,
+        MathLogic: 0,
+        Engineering: 0,
+        Systems: 0,
+        Communication: 0,
+        Storytelling: 0,
+        Aesthetics: 0,
+        EmpathyCare: 0,
+        Leadership: 0,
+        PublicInfluence: 0,
+        CommunityNetwork: 0,
+        MoneyAssets: 0,
+        RiskFinance: 0,
+        LawCompliance: 0,
+        TeachingMentoring: 0,
+        Operations: 0,
+        Innovation: 0,
+        Strategy: 0,
+      };
+      
 
   const reasons: string[] = [];
 
@@ -217,6 +219,7 @@ function tZh(t: CareerTag) {
     MathLogic: "数理逻辑",
     Engineering: "工程实现",
     Systems: "系统/流程",
+    Strategy: "战略决策", // ← 修复：添加缺失的 Strategy 字段
     Communication: "表达传播",
     Storytelling: "叙事内容",
     Aesthetics: "审美艺术",
