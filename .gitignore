@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+
+# deps
+node_modules/
+
+# next
+.next/
+out/
+
+# env
+.env.local
+.env.*.local
+
+# data/cache
+.data/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# optional
+.vercel/
