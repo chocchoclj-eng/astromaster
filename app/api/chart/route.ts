@@ -1,9 +1,19 @@
+// app/api/chart/route.ts
 import { NextResponse } from "next/server";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 
 export const runtime = "nodejs";
+
+// ✅ 运行时加载 native addon，绕过 Next bundler 对 .node 的解析
+function getSweph() {
+  const g = globalThis as any;
+  if (g.__SWE__) return g.__SWE__;
+  const require = createRequire(import.meta.url);
+  g.__SWE__ = require("sweph");
+  return g.__SWE__;
+}
 
 const STORE_DIR = path.join(process.cwd(), ".data", "charts");
 
@@ -34,11 +44,6 @@ function mustNum(v: any, name: string) {
   if (!Number.isFinite(n)) throw new Error(`Missing/invalid ${name}`);
   return n;
 }
-function mustStr(v: any, name: string) {
-  const s = String(v ?? "").trim();
-  if (!s) throw new Error(`Missing ${name}`);
-  return s;
-}
 
 function buildInput(params: any) {
   const y = mustNum(params.y, "y");
@@ -52,7 +57,8 @@ function buildInput(params: any) {
   const lat = mustNum(params.lat, "lat");
   const lon = mustNum(params.lon, "lon");
 
-  const locationName = mustStr(params.locationName ?? params.city, "locationName");
+  // ✅ 不再强制必须有 locationName（避免 curl/内部调用被拦）
+  const locationName = String(params.locationName ?? params.city ?? "").trim() || "—";
   const name = String(params.name ?? "").trim();
 
   return { y, m, d, hh, mm, ss, tzOffsetHours, lat, lon, locationName, name };
@@ -69,37 +75,149 @@ function inputToLocalBirthDateTime(input: any) {
   return `${input.y}-${pad2(input.m)}-${pad2(input.d)}T${pad2(input.hh)}:${pad2(input.mm)}:${pad2(input.ss)}`;
 }
 
-async function runWorker(input: any) {
-  const workerPath = path.join(process.cwd(), "scripts", "chart-worker.cjs");
-  return await new Promise<any>((resolve, reject) => {
-    const p = spawn(process.execPath, [workerPath], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+/** ====== sweph 同步算盘（替代 worker） ====== */
 
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    p.stdout.on("data", (d) => out.push(d));
-    p.stderr.on("data", (d) => err.push(d));
-    p.on("error", reject);
+function norm(x: number) {
+  return ((x % 360) + 360) % 360;
+}
 
-    p.on("close", (code) => {
-      const stderr = Buffer.concat(err).toString("utf8").trim();
-      const stdout = Buffer.concat(out).toString("utf8").trim();
-      if (!stdout) return reject(new Error(stderr || `worker exited code=${code}`));
-      try {
-        resolve(JSON.parse(stdout));
-      } catch {
-        reject(new Error(`worker output not json:\n${stdout}\n\nstderr:\n${stderr}`));
-      }
-    });
+function localToUTC(y: number, m: number, d: number, hh: number, mm: number, ss: number, tz: number) {
+  const dt = new Date(Date.UTC(y, m - 1, d, hh - tz, mm, ss));
+  return {
+    y: dt.getUTCFullYear(),
+    m: dt.getUTCMonth() + 1,
+    d: dt.getUTCDate(),
+    hh: dt.getUTCHours(),
+    mm: dt.getUTCMinutes(),
+    ss: dt.getUTCSeconds(),
+  };
+}
 
-    p.stdin.write(JSON.stringify(input));
-    p.stdin.end();
-  });
+function utcToJdUt(utc: { y: number; m: number; d: number; hh: number; mm: number; ss: number }) {
+  const sweph = getSweph();
+  const r = sweph.utc_to_jd(utc.y, utc.m, utc.d, utc.hh, utc.mm, utc.ss, 1);
+  if (r.flag !== 0) throw new Error(r.error || "utc_to_jd failed");
+  return { jd_et: r.data[0], jd_ut: r.data[1] };
+}
+
+function getHousesKoch(jd_ut: number, lat: number, lon: number) {
+  const sweph = getSweph();
+  const h = sweph.houses(jd_ut, lat, lon, "K");
+  if (h.flag !== 0) throw new Error("houses failed");
+  return {
+    cusps: h.data.houses.map(norm),
+    points: h.data.points.map(norm), // points[0]=ASC, points[1]=MC
+  };
+}
+
+function houseOf(lon: number, cusps: number[]) {
+  lon = norm(lon);
+  const start = cusps[0];
+  const n = (x: number) => norm(x - start);
+  const lonN = n(lon);
+  const c = cusps.map(n);
+  for (let i = 0; i < 12; i++) {
+    const a = c[i];
+    const b = i === 11 ? 360 : c[i + 1];
+    if (lonN >= a && lonN < b) return i + 1;
+  }
+  return 12;
+}
+
+function dms(lon: number) {
+  lon = norm(lon);
+  const sign = Math.floor(lon / 30);
+  const d = lon - sign * 30;
+  const deg = Math.floor(d);
+  const min = Math.floor((d - deg) * 60);
+  return { sign, deg, min };
+}
+
+function calcBody(jd_ut: number, id: number) {
+  const sweph = getSweph();
+  const FLAG = (sweph.FLG_MOSEPH ?? 0) | (sweph.FLG_SPEED ?? 0);
+  const r = sweph.calc_ut(jd_ut, Number(id), FLAG);
+
+  // 找不到 ephe 文件时，会 fallback 到 Moshier，这是允许的
+  const msg = String(r.error || "");
+  if (r.flag !== 0 && !msg.includes("Moshier")) {
+    throw new Error(r.error || "calc_ut failed");
+  }
+
+  return {
+    lon: norm(r.data[0]),
+    lat: r.data[1],
+    speed: r.data[3],
+  };
+}
+
+async function calcChartSync(input: any) {
+  const sweph = getSweph();
+
+  // ✅ ephe：你有就用，没有也能跑（但会 fallback）
+  sweph.set_ephe_path(process.env.SWE_EPH_PATH || path.join(process.cwd(), "ephe"));
+
+  const utc = localToUTC(input.y, input.m, input.d, input.hh, input.mm, input.ss, input.tzOffsetHours);
+  const { jd_ut } = utcToJdUt(utc);
+
+  const { cusps, points } = getHousesKoch(jd_ut, input.lat, input.lon);
+
+  const ASC = points[0];
+  const MC = points[1];
+
+  const bodiesMap: Record<string, number> = {
+    Sun: 0,
+    Moon: 1,
+    Mercury: 2,
+    Venus: 3,
+    Mars: 4,
+    Jupiter: 5,
+    Saturn: 6,
+    Uranus: 7,
+    Neptune: 8,
+    Pluto: 9,
+    TrueNode: 11, // 真北交
+  };
+
+  const bodies: Record<string, any> = {};
+
+  for (const [name, id] of Object.entries(bodiesMap)) {
+    const p = calcBody(jd_ut, id);
+
+    if (name === "TrueNode") {
+      const north = p.lon;
+      const south = norm(north + 180);
+
+      bodies["TrueNode_North"] = { lon: north, house: houseOf(north, cusps), ...dms(north) };
+      bodies["TrueNode_South"] = { lon: south, house: houseOf(south, cusps), ...dms(south) };
+    } else {
+      bodies[name] = { ...p, house: houseOf(p.lon, cusps), ...dms(p.lon) };
+    }
+  }
+
+  return {
+    meta: {
+      zodiac: "tropical",
+      houseSystem: "K",
+      node: "true",
+      center: "geocentric",
+      ephemeris: "swiss",
+      jd_ut,
+      utc,
+      location: { lat: input.lat, lon: input.lon },
+    },
+    angles: { ASC, MC },
+    houses: { cusps },
+    bodies,
+  };
 }
 
 /** ===== chart -> keyConfig 适配（用于你现有 ReportClient/Live） ===== */
 
-const SIGNS_ZH = ["白羊","金牛","双子","巨蟹","狮子","处女","天秤","天蝎","射手","摩羯","水瓶","双鱼"];
-function norm360(x: number) { return ((x % 360) + 360) % 360; }
+const SIGNS_ZH = ["白羊", "金牛", "双子", "巨蟹", "狮子", "处女", "天秤", "天蝎", "射手", "摩羯", "水瓶", "双鱼"];
+function norm360(x: number) {
+  return ((x % 360) + 360) % 360;
+}
 function lonToSign(lon: number) {
   const x = norm360(lon);
   const si = Math.floor(x / 30);
@@ -108,15 +226,16 @@ function lonToSign(lon: number) {
   const min = Math.floor((d - deg) * 60);
   return { lon: x, sign: SIGNS_ZH[si], deg, min };
 }
+
 function chartToKeyConfig(chart: any) {
   const metaInput = chart?.meta?.input || {};
   const tzOffsetHours = Number(metaInput?.tzOffsetHours ?? chart?.meta?.tzOffsetHours ?? 0);
 
   const ascLon = Number(chart?.angles?.ASC);
-  const mcLon  = Number(chart?.angles?.MC);
+  const mcLon = Number(chart?.angles?.MC);
 
   const asc = Number.isFinite(ascLon) ? { ...lonToSign(ascLon), house: 1 } : null;
-  const mc  = Number.isFinite(mcLon)  ? { ...lonToSign(mcLon),  house: 10 } : null;
+  const mc = Number.isFinite(mcLon) ? { ...lonToSign(mcLon), house: 10 } : null;
 
   const b = chart?.bodies || {};
   const mk = (src: any) => {
@@ -147,7 +266,7 @@ function chartToKeyConfig(chart: any) {
   push("SouthNode", b.TrueNode_South || b.SouthNode);
 
   if (asc) planets.push({ body: "ASC", ...asc });
-  if (mc)  planets.push({ body: "MC",  ...mc });
+  if (mc) planets.push({ body: "MC", ...mc });
 
   return {
     input: {
@@ -186,12 +305,12 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const input = buildInput(body);
 
-    // ✅ 让 worker 用输入的 lat/lon 计算（worker 必须读 input.lat/lon）
-    const chart = await runWorker(input);
+    // ✅ 同步 sweph 计算（替代 worker）
+    const chart = await calcChartSync(input);
 
-    // ✅ 固化“用户输入”（report 显示就稳定，不会再 00:09 -> 08:09）
+    // ✅ 固化“用户输入”（report 显示就稳定）
     chart.meta = chart.meta || {};
-    chart.meta.input = {
+    (chart.meta as any).input = {
       name: input.name,
       city: input.locationName,
       birthDateTime: inputToLocalBirthDateTime(input),
@@ -199,8 +318,8 @@ export async function POST(req: Request) {
       utcOffset: hoursToUtcOffsetStr(input.tzOffsetHours),
       lat: input.lat,
       lon: input.lon,
+      locationName: input.locationName,
     };
-    chart.meta.locationName = input.locationName;
     chart.meta.location = { lat: input.lat, lon: input.lon };
 
     const id = genId();
@@ -208,10 +327,10 @@ export async function POST(req: Request) {
 
     const keyConfig = chartToKeyConfig(chart);
 
-    // 你用来排查输入是否正确（生产可删）
     return NextResponse.json({ ok: true, id, keyConfig, debugInput: input });
   } catch (e: any) {
+    console.error("CHART API ERROR:", e);
+    console.error(e?.stack);
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
-

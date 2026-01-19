@@ -20,4 +20,5 @@ const nextConfig = {
   },
 };
 
+nextConfig.serverExternalPackages = ["sweph"];
 module.exports = nextConfig;
