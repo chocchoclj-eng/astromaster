@@ -1,322 +1,171 @@
-// app/api/report/route.ts
+// app/api/chart/route.ts
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import path from "path";
 
+// ✅ 强制 Node runtime（Vercel 才能跑 native）
 export const runtime = "nodejs";
 
-const apiKey = process.env.GEMINI_API_KEY || "";
-const ai = new GoogleGenAI({ apiKey });
+// ✅ sweph 在 TS 下的导入兼容写法（你本地 require OK，这里用 default）
+import swephPkg from "sweph";
+const sweph: any = swephPkg;
 
-type Mode = "free" | "A" | "B" | "C";
-type KeyConfigPlaceholder = any;
-type ReportModule = { id: number; title: string; markdown: string };
-
-function compactKeyConfig(keyConfig: KeyConfigPlaceholder) {
-  const c = keyConfig?.core ?? {};
-
-  const pickAspects = (arr: any[]) =>
-    (arr ?? []).slice(0, 8).map((a: any) => ({
-      a: a.a,
-      b: a.b,
-      type: a.type,
-      orb: a.orb,
-    }));
-
-  const topHouses = (keyConfig?.houseFocusTop3 ?? []).map((x: any) => ({
-    house: x.house,
-    score: x.score,
-    bodies: x.bodies,
-  }));
-
-  return {
-    input: keyConfig?.input ?? {},
-    // ✅ 把你 chart 端稳定版 overview 传进来（非常关键）
-    overview: keyConfig?.overview ?? undefined,
-
-    core: {
-      sun: c.sun,
-      moon: c.moon,
-      asc: c.asc,
-      mc: c.mc,
-      saturn: c.saturn,
-    },
-    nodes: keyConfig?.nodes ?? undefined,
-    humanSummary: keyConfig?.humanSummary ?? undefined,
-    houseFocusTop3: topHouses,
-    innerHardAspects: pickAspects(keyConfig?.innerHardAspectsTop3),
-    saturnAspects: pickAspects(keyConfig?.saturnAspectsTop),
-    outerHardAspects: pickAspects(keyConfig?.outerHardAspectsTop3),
-  };
-}
-
-function parseMarkdownToStructuredData(markdown: string): { summary: string; modules: ReportModule[] } {
-  const modules: ReportModule[] = [];
-  let summary = "";
-
-  const cleanMarkdown = markdown.replace(/---/g, "").trim();
-  const parts = cleanMarkdown
-    .split("##")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-
-  parts.forEach((part) => {
-    const lines = part.split("\n");
-    const titleLine = lines[0] || "";
-    const titleMatch = titleLine.match(/^(\d+)\s*(.*)/);
-
-    if (titleMatch) {
-      const id = parseInt(titleMatch[1], 10);
-      const title = `## ${titleMatch[1]} ${titleLine.trim()}`;
-      const markdownContent = lines.slice(1).join("\n").trim();
-
-      // summary 取模块 0 的「结论一句话」
-      if (id === 0) {
-        const conclusionMatch = markdownContent.match(/1\)\s*结论一句话\s*💡\s*([\s\S]*)/);
-        summary = conclusionMatch
-          ? conclusionMatch[1].split("\n")[0].trim()
-          : markdownContent.split("\n\n")[0].trim();
-      }
-
-      modules.push({ id, title, markdown: markdownContent });
-    }
-  });
-
-  modules.sort((a, b) => a.id - b.id);
-  return { summary, modules };
-}
-
-const signMap: Record<string, string> = {
-  Aries: "白羊座",
-  Taurus: "金牛座",
-  Gemini: "双子座",
-  Cancer: "巨蟹座",
-  Leo: "狮子座",
-  Virgo: "处女座",
-  Libra: "天秤座",
-  Scorpio: "天蝎座",
-  Sagittarius: "射手座",
-  Capricorn: "摩羯座",
-  Aquarius: "水瓶座",
-  Pisces: "双鱼座",
+type ChartInput = {
+  y: number;
+  m: number;
+  d: number;
+  hh: number;
+  mm: number;
+  ss: number;
+  tzOffsetHours: number; // 例如 上海 +8 就传 8
+  lat: number;
+  lon: number;
 };
 
-function translateSign(englishSign: string): string {
-  return signMap[englishSign] || englishSign;
+function norm(x: number) {
+  return ((x % 360) + 360) % 360;
 }
 
-function buildPrompt(keyConfig: KeyConfigPlaceholder, mode: Mode): string {
-  const mini = compactKeyConfig(keyConfig);
+function localToUTC(y: number, m: number, d: number, hh: number, mm: number, ss: number, tz: number) {
+  const dt = new Date(Date.UTC(y, m - 1, d, hh - tz, mm, ss));
+  return {
+    y: dt.getUTCFullYear(),
+    m: dt.getUTCMonth() + 1,
+    d: dt.getUTCDate(),
+    hh: dt.getUTCHours(),
+    mm: dt.getUTCMinutes(),
+    ss: dt.getUTCSeconds(),
+  };
+}
 
-  // ✅ 核心星座翻译为中文（防止 AI 混英文）
-  const coreKeys = ["sun", "moon", "asc", "mc", "saturn"] as const;
-  const core = mini.core || {};
+function utcToJdUt(utc: { y: number; m: number; d: number; hh: number; mm: number; ss: number }) {
+  const r = sweph.utc_to_jd(utc.y, utc.m, utc.d, utc.hh, utc.mm, utc.ss, 1);
+  if (r.flag !== 0) throw new Error(r.error || "utc_to_jd failed");
+  return { jd_et: r.data[0], jd_ut: r.data[1] };
+}
 
-  coreKeys.forEach((k) => {
-    if (core?.[k]?.sign) core[k].sign = translateSign(core[k].sign);
-  });
+function getHousesKoch(jd_ut: number, lat: number, lon: number) {
+  const h = sweph.houses(jd_ut, lat, lon, "K");
+  if (h.flag !== 0) throw new Error("houses failed");
+  return {
+    cusps: h.data.houses.map(norm),
+    points: h.data.points.map(norm),
+  };
+}
 
-  if (mini.nodes?.north?.sign) mini.nodes.north.sign = translateSign(mini.nodes.north.sign);
-  if (mini.nodes?.south?.sign) mini.nodes.south.sign = translateSign(mini.nodes.south.sign);
+function houseOf(lon: number, cusps: number[]) {
+  lon = norm(lon);
+  const start = cusps[0];
+  const n = (x: number) => norm(x - start);
+  const lonN = n(lon);
+  const c = cusps.map(n);
+  for (let i = 0; i < 12; i++) {
+    const a = c[i];
+    const b = i === 11 ? 360 : c[i + 1];
+    if (lonN >= a && lonN < b) return i + 1;
+  }
+  return 12;
+}
 
-  const base = `
-你是一位专业的“结构化占星解读”写作助手。你的输出必须：清晰、可执行、用户听得懂。
+function dms(lon: number) {
+  lon = norm(lon);
+  const sign = Math.floor(lon / 30);
+  const d = lon - sign * 30;
+  const deg = Math.floor(d);
+  const min = Math.floor((d - deg) * 60);
+  return { sign, deg, min };
+}
 
-【重要目标（写给真实用户看）】
-- 用户不看速查表：你要把“太阳/月亮/上升/宫位/相位”讲成人话，然后立刻用这个人的真实数据下结论。
-- 你必须做“交叉影响分析”：至少指出 1-2 处「A 的落点/相位」如何影响「B 的选择/关系/事业」。
-- 每个模块都必须包含 低阶/中阶/高阶 三种表现：🔻 / 🟡 / ✅（用列表）。
+function calcBody(jd_ut: number, id: number) {
+  const FLAG = (sweph.FLG_MOSEPH ?? 0) | (sweph.FLG_SPEED ?? 0);
+  const r = sweph.calc_ut(jd_ut, Number(id), FLAG);
 
-【非常重要：稳定总览】
-- 如果输入里有 overview.oneSentence：你必须把它当作“稳定版一句话总览”，在模块 0 的结论一句话里直接输出它（可以轻微润色但不要改含义）。
-- 模块 1 在科普结束后，也要输出一条“这张盘的一句话画像”（尽量与 overview.oneSentence 保持一致）。
+  // 找不到 sepl_18.se1 时，SwissEph 会 fallback 到 Moshier，这是正常的
+  const msg = String(r.error || "");
+  if (r.flag !== 0 && !msg.includes("Moshier")) {
+    throw new Error(r.error || "calc_ut failed");
+  }
 
-【格式要求】
-1) 必须 Markdown。
-2) 每个模块结束用 --- 分隔。
-3) free 模式必须包含 H2：## 0 到 ## 6。
-4) 每个模块严格七段结构（顺序固定）：
-   1) 结论一句话 💡
-   2) 证据点 🔬（只引用 JSON 字段，不加解释）
-   3) 🔸（基础表现，列表）
-   4) 🔻（低阶表现，列表）
-   5) 🟡（中阶表现，列表）
-   6) ✅（高阶表现，列表）
-   7) 🛠️（2-3 条可执行建议，列表）
+  return {
+    lon: norm(r.data[0]),
+    lat: r.data[1],
+    speed: r.data[3],
+  };
+}
 
-【输入数据（结构化证据）】
-${JSON.stringify(mini, null, 2)}
+function calcChartKoch(input: ChartInput) {
+  // ✅ 你 worker 里用的是项目根目录 /ephe
+  // 你要保证这个 ephe 文件夹在仓库里，并被部署带上（别被 .gitignore 掉）
+  // 如果你没有 ephe 文件夹：也能跑（会 Moshier fallback），但精度/一致性可能不同
+  sweph.set_ephe_path(process.env.SWE_EPH_PATH || path.join(process.cwd(), "ephe"));
 
-【模块写法要求（关键）】
-- 模块 1 必须先用“人话”解释：
-  太阳是什么、月亮是什么、上升/MC 是什么、宫位是什么、相位是什么（合/冲/刑/拱/六合 + orb 越小越强）。
-  然后必须给“这张盘的一句话画像”（只输出 1 句，不要知识科普）。
-  再用本人的盘举 1 个例子说明“怎么从数据推结论”（例如：太阳巨蟹座第4宫=什么含义）。
-- 模块 2~6：
-  结论一句话必须直给结论，不要绕；
-  🔸/🔻/🟡/✅ 体现“行为层面的差异”，并且至少 1 条写交叉影响（最好放在 🟡 或 ✅）。
-- “证据点 🔬”只写字段，例如：\`core.sun.sign: 巨蟹座\`、\`innerHardAspects[0].type: SQR\`，不要解释。
+  const utc = localToUTC(input.y, input.m, input.d, input.hh, input.mm, input.ss, input.tzOffsetHours);
+  const { jd_ut } = utcToJdUt(utc);
+  const { cusps, points } = getHousesKoch(jd_ut, input.lat, input.lon);
 
-【深度模式指令】
-- 如果 mode 不是 free：只输出该模式内容（不输出 0-6），但仍要求：七段结构 + 低/中/高 + 交叉影响。
-`;
+  const ASC = points[0];
+  const MC = points[1];
 
-  const modeExtra: Record<Mode, string> = {
-    free: `【free】输出完整基础报告：##0~##6。`,
-    A: `【A】聚焦关系/亲密：月亮、金星线索、七宫主题、硬相位如何触发关系模式；输出可执行沟通/边界策略。`,
-    B: `【B】聚焦事业/财富：MC/十宫、二宫线索、土星课题、硬相位如何影响职业决策与资源配置；输出“系统化路径”。`,
-    C: `【C】聚焦心理/整合：土星相位、内行星硬相位；按“触发点→旧模式→新模式→训练动作”给清晰练习。`,
+  // Swiss Ephemeris body IDs
+  const bodiesMap: Record<string, number> = {
+    Sun: 0,
+    Moon: 1,
+    Mercury: 2,
+    Venus: 3,
+    Mars: 4,
+    Jupiter: 5,
+    Saturn: 6,
+    Uranus: 7,
+    Neptune: 8,
+    Pluto: 9,
+    TrueNode: 11, // TRUE NODE
   };
 
-  return base + "\n" + modeExtra[mode];
-}
+  const bodies: Record<string, any> = {};
+  for (const [name, id] of Object.entries(bodiesMap)) {
+    const p = calcBody(jd_ut, id);
 
-function modelFor(_: Mode) {
-  return "gemini-2.5-flash";
-}
-
-async function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// ✅ 更稳：兼容多种 SDK 返回结构
-function extractText(resp: any): string {
-  if (!resp) return "";
-  if (typeof resp.text === "string") return resp.text;
-  if (typeof resp.text === "function") {
-    try {
-      const t = resp.text();
-      if (typeof t === "string") return t;
-    } catch {}
-  }
-  // 兼容候选结构
-  const parts =
-    resp?.candidates?.[0]?.content?.parts ??
-    resp?.response?.candidates?.[0]?.content?.parts ??
-    resp?.response?.candidates?.[0]?.content?.[0]?.parts;
-
-  if (Array.isArray(parts)) {
-    return parts.map((p: any) => p?.text).filter(Boolean).join("");
-  }
-  return "";
-}
-
-async function callGemini(systemInstruction: string, userPrompt: string, mode: Mode) {
-  const MAX_RETRIES = 5;
-  let delayTime = 5000;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelFor(mode),
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        config: {
-          systemInstruction,
-          temperature: 0.4,
-          maxOutputTokens: 3500,
-        },
-      });
-      return response;
-    } catch (e: any) {
-      if (e?.status === 503 && attempt < MAX_RETRIES - 1) {
-        console.warn(`Gemini 503，${delayTime / 1000}s 后重试... (${attempt + 1}/${MAX_RETRIES})`);
-        await delay(delayTime);
-        delayTime *= 2;
-      } else {
-        throw e;
-      }
+    if (name === "TrueNode") {
+      const north = p.lon;
+      const south = norm(north + 180);
+      bodies["TrueNode_North"] = { lon: north, house: houseOf(north, cusps), ...dms(north) };
+      bodies["TrueNode_South"] = { lon: south, house: houseOf(south, cusps), ...dms(south) };
+    } else {
+      bodies[name] = { ...p, house: houseOf(p.lon, cusps), ...dms(p.lon) };
     }
   }
 
-  throw new Error("达到最大重试次数，仍无法连接到 Gemini API。");
-}
-
-const REQUIRED = [
-  "## 0 输入信息",
-  "## 1 主轴骨架",
-  "## 2 人生主战场",
-  "## 3 人格冲突点",
-  "## 4 土星难度条",
-  "## 5 外行星转折机制",
-  "## 6 灵魂方向",
-];
-
-function missingHeadings(text: string) {
-  return REQUIRED.filter((h) => !text.includes(h));
-}
-
-function mergeAndDeduplicate(originalText: string, newText: string): string {
-  if (!newText) return originalText;
-
-  const newHeadings = newText.match(/##\s*\d+\s*(.*?)(?:\n|$)/g) || [];
-  let textToMerge = originalText;
-
-  newHeadings.forEach((newH) => {
-    const idMatch = newH.match(/##\s*(\d+)/);
-    if (idMatch) {
-      const id = idMatch[1];
-      const regex = new RegExp(`##\\s*${id}\\s*.*?(?=(##\\s*\\d+|\\s*$))`, "gs");
-      textToMerge = textToMerge.replace(regex, "");
-    }
-  });
-
-  return (textToMerge.trim() + "\n\n" + newText.trim()).trim();
+  return {
+    meta: {
+      zodiac: "tropical",
+      houseSystem: "K",
+      node: "true",
+      center: "geocentric",
+      ephemeris: "swiss",
+      jd_ut,
+      utc,
+      location: { lat: input.lat, lon: input.lon },
+    },
+    angles: { ASC, MC },
+    houses: { cusps },
+    bodies,
+  };
 }
 
 export async function POST(req: Request) {
   try {
-    if (!apiKey) {
-      return NextResponse.json({ error: "Missing GEMINI_API_KEY in .env.local" }, { status: 500 });
-    }
+    const input = (await req.json()) as ChartInput;
 
-    const { keyConfig, mode = "free" } = (await req.json()) as {
-      keyConfig?: KeyConfigPlaceholder;
-      mode?: Mode;
-    };
-
-    if (!keyConfig) {
-      return NextResponse.json({ error: "Missing keyConfig" }, { status: 400 });
-    }
-
-    const systemInstruction = buildPrompt(keyConfig, mode);
-    const userPrompt = `按系统指令输出报告。${mode === "free" ? "必须覆盖所有模块（##0~##6），不要漏。" : ""}`;
-
-    // 1) 首次生成（带 503 重试）
-    const r1 = await callGemini(systemInstruction, userPrompt, mode);
-    let text = extractText(r1).trim();
-
-    // 2) free 模式：缺失补救
-    if (mode === "free") {
-      const miss1 = missingHeadings(text);
-      if (miss1.length > 0 || text.length < 1000) {
-        const modulesToRescue = miss1.length > 0 ? miss1.join(", ") : "文本疑似中断，请从中断处继续补齐";
-        console.warn(`缺失/中断: ${modulesToRescue}，开始补救...`);
-
-        const rescuePrompt = `你上一次输出不完整，缺失或中断在：${modulesToRescue}。只输出这些缺失模块，从对应 ## 标题开始，严格七段结构。`;
-        const r2 = await callGemini(systemInstruction, rescuePrompt, mode);
-        const add = extractText(r2).trim();
-        text = mergeAndDeduplicate(text, add);
+    // 简单校验
+    for (const k of ["y", "m", "d", "hh", "mm", "ss", "tzOffsetHours", "lat", "lon"] as const) {
+      if (typeof input[k] !== "number") {
+        return NextResponse.json({ ok: false, error: `Missing/invalid ${k}` }, { status: 400 });
       }
     }
 
-    if (!text) {
-      return NextResponse.json({ error: "Gemini returned empty text" }, { status: 502 });
-    }
-
-    // 3) 解析结构化返回
-    if (mode === "free") {
-      const { summary, modules } = parseMarkdownToStructuredData(text);
-
-      // 你前端如果自己渲染输入信息/科普区，可以继续过滤 0
-      // 如果你希望 Gemini 生成的 0 也展示，就把这一行删掉即可
-      const finalModules = modules.filter((m) => m.id !== 0);
-
-      return NextResponse.json({ summary, modules: finalModules, deep: {} });
-    } else {
-      const deepKey = mode as "A" | "B" | "C";
-      return NextResponse.json({ summary: "", modules: [], deep: { [deepKey]: text } });
-    }
+    const result = calcChartKoch(input);
+    return NextResponse.json(result);
   } catch (e: any) {
-    console.error("REPORT API ERROR:", e);
-    return NextResponse.json({ error: e?.message || "Report API failed" }, { status: 500 });
+    console.error("CHART API ERROR:", e);
+    return NextResponse.json({ ok: false, error: e?.message || "Chart API failed" }, { status: 500 });
   }
 }
