@@ -5,7 +5,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Card, ErrorBox, Pill } from "./report-ui";
 import { explainPlacementImpact, planetMeaning, zhBody, fmtDeg } from "@/lib/astroExplain";
 import { CareerTab } from "./career-tab";
-import { Loader2, Briefcase, Sparkles, Fingerprint, Terminal } from "lucide-react";
 
 // ✅ 你已有：normalizePlacements + buildExplainItems
 import { normalizePlacements, buildExplainItems } from "@/lib/career";
@@ -126,7 +125,8 @@ export function ReportClient({ id }: Props) {
   if (loadingChart)
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-[#050505] text-white">
-        <Loader2 className="animate-spin text-indigo-500 mb-4" size={40} />
+        {/* Loader2 was missing - using a simple spinner as a placeholder */}
+        <div className="animate-spin rounded-full border-4 border-indigo-500 border-t-transparent w-10 h-10 mb-4" />
         <p className="text-sm font-black tracking-[0.4em] text-white/40 uppercase font-data">
           System Decoding...
         </p>
@@ -156,7 +156,8 @@ export function ReportClient({ id }: Props) {
           <div className="flex flex-col md:flex-row justify-between items-end gap-8 bg-white/[0.02] border border-white/5 p-10 rounded-[40px] backdrop-blur-md relative overflow-hidden">
             <div className="space-y-5 relative z-10">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-black text-indigo-400 uppercase tracking-widest font-data">
-                <Fingerprint size={12} /> Registry / 灵魂登记
+                {/* Replaced missing Fingerprint icon with emoji as placeholder */}
+                <span role="img" aria-label="fingerprint">📝</span> Registry / 灵魂登记
               </div>
               <h1 className="text-6xl font-black tracking-tighter text-white font-heading">
                 {headerInfo.name}
@@ -207,7 +208,7 @@ export function ReportClient({ id }: Props) {
                 : "bg-white/5 text-white/30 hover:bg-white/10"
             }`}
           >
-            <Sparkles size={20} /> 基础星盘科普
+            <span role="img" aria-label="sparkles">✨</span> 基础星盘科普
           </button>
           <button
             onClick={() => setActiveTab("career")}
@@ -217,7 +218,7 @@ export function ReportClient({ id }: Props) {
                 : "bg-white/5 text-white/30 hover:bg-white/10"
             }`}
           >
-            <Briefcase size={20} /> 职业配置 / 灵魂身份
+            <span role="img" aria-label="briefcase">💼</span> 职业配置 / 灵魂身份
           </button>
         </nav>
 
@@ -268,7 +269,11 @@ export function ReportClient({ id }: Props) {
                       <div className="lg:col-span-8 rounded-[48px] border border-white/10 bg-[#08080A] p-10 md:p-14 relative overflow-hidden group-hover:border-indigo-500/30 transition-all shadow-2xl ring-1 ring-white/5">
                         <div className="relative z-10">
                           <div className="text-[11px] font-data uppercase text-indigo-400 tracking-[0.4em] mb-10 flex items-center gap-3">
-                            <Terminal size={14} className="text-indigo-500" />{" "}
+                            {/* Fixed: Import or inline icon instead of undefined Terminal */}
+                            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" className="text-indigo-500" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M4 17L10 11L4 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                              <rect x="12" y="19" width="8" height="2" rx="1" fill="currentColor"/>
+                            </svg>
                             Soul_Architecture_Deep_Dive
                           </div>
 
