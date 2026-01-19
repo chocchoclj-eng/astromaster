@@ -7,8 +7,17 @@ export type ChartRow = {
   createdAt: string;
   keyConfig: any;
 };
-// 使用绝对路径锁定，防止 process.cwd() 漂移
-const DB_PATH = path.resolve(process.cwd(), ".data"); 
+
+// 是否运行在 Vercel
+const isVercel = !!process.env.VERCEL;
+
+// ✅ Vercel: 只能写 /tmp（临时）
+// ✅ 本地: 仍然使用项目目录下的 .data
+const BASE_DIR = isVercel
+  ? "/tmp"
+  : path.resolve(process.cwd(), ".data");
+
+const DB_PATH = path.join(BASE_DIR, "charts");
 const FILE_PATH = path.join(DB_PATH, "charts.json");
 
 async function ensureFile() {
@@ -43,15 +52,12 @@ export async function readChart(id: string): Promise<ChartRow | null> {
   return all[id] ?? null;
 }
 
-/**
- * ✅ 兼容别名：我之前给你的 api/chart GET 用的是 getChart
- * 你也可以不改 api/chart，直接用 readChart；但加这个最省事
- */
+// ✅ 兼容你已有的 api/chart GET
 export async function getChart(id: string): Promise<ChartRow | null> {
   return readChart(id);
 }
 
-// 你后面如果要存 A/B/C 深度报告，可以加这个（先不影响现有逻辑）
+// 预留接口
 export async function saveDeepReport(_: any) {
   return;
 }
