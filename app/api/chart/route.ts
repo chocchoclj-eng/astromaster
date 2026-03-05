@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import { computeScore } from "@/lib/scoring/engine";
 
 export const runtime = "nodejs";
 
@@ -57,7 +58,7 @@ function buildInput(params: any) {
   const lat = mustNum(params.lat, "lat");
   const lon = mustNum(params.lon, "lon");
 
-  // ✅ 不再强制必须有 locationName（避免 curl/内部调用被拦）
+  // ✅ 不再强制必须有 locationName
   const locationName = String(params.locationName ?? params.city ?? "").trim() || "—";
   const name = String(params.name ?? "").trim();
 
@@ -75,7 +76,7 @@ function inputToLocalBirthDateTime(input: any) {
   return `${input.y}-${pad2(input.m)}-${pad2(input.d)}T${pad2(input.hh)}:${pad2(input.mm)}:${pad2(input.ss)}`;
 }
 
-/** ====== sweph 同步算盘（替代 worker） ====== */
+/** ====== sweph 同步算盘 ====== */
 
 function norm(x: number) {
   return ((x % 360) + 360) % 360;
@@ -153,8 +154,6 @@ function calcBody(jd_ut: number, id: number) {
 
 async function calcChartSync(input: any) {
   const sweph = getSweph();
-
-  // ✅ ephe：你有就用，没有也能跑（但会 fallback）
   sweph.set_ephe_path(process.env.SWE_EPH_PATH || path.join(process.cwd(), "ephe"));
 
   const utc = localToUTC(input.y, input.m, input.d, input.hh, input.mm, input.ss, input.tzOffsetHours);
@@ -187,7 +186,6 @@ async function calcChartSync(input: any) {
     if (name === "TrueNode") {
       const north = p.lon;
       const south = norm(north + 180);
-
       bodies["TrueNode_North"] = { lon: north, house: houseOf(north, cusps), ...dms(north) };
       bodies["TrueNode_South"] = { lon: south, house: houseOf(south, cusps), ...dms(south) };
     } else {
@@ -294,7 +292,10 @@ export async function GET(req: Request) {
     const chart = await loadChart(id);
     const keyConfig = chartToKeyConfig(chart);
 
-    return NextResponse.json({ ok: true, id, keyConfig });
+    // ✅ 关键：GET 也算分
+    const score = computeScore(keyConfig);
+
+    return NextResponse.json({ ok: true, id, keyConfig, score });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
@@ -305,10 +306,8 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const input = buildInput(body);
 
-    // ✅ 同步 sweph 计算（替代 worker）
     const chart = await calcChartSync(input);
 
-    // ✅ 固化“用户输入”（report 显示就稳定）
     chart.meta = chart.meta || {};
     (chart.meta as any).input = {
       name: input.name,
@@ -318,7 +317,6 @@ export async function POST(req: Request) {
       utcOffset: hoursToUtcOffsetStr(input.tzOffsetHours),
       lat: input.lat,
       lon: input.lon,
-      locationName: input.locationName,
     };
     chart.meta.location = { lat: input.lat, lon: input.lon };
 
@@ -327,7 +325,10 @@ export async function POST(req: Request) {
 
     const keyConfig = chartToKeyConfig(chart);
 
-    return NextResponse.json({ ok: true, id, keyConfig, debugInput: input });
+    // ✅ 关键：POST 也算分
+    const score = computeScore(keyConfig);
+
+    return NextResponse.json({ ok: true, id, keyConfig, score, debugInput: input });
   } catch (e: any) {
     console.error("CHART API ERROR:", e);
     console.error(e?.stack);

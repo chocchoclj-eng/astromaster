@@ -5,18 +5,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Card, ErrorBox, Pill } from "./report-ui";
 import { explainPlacementImpact, planetMeaning, zhBody, fmtDeg } from "@/lib/astroExplain";
 import { CareerTab } from "./career-tab";
+import { ScorePanel } from "./score-panel";
 
 // ✅ 你已有：normalizePlacements + buildExplainItems
 import { normalizePlacements, buildExplainItems } from "@/lib/career";
 
 // ✅ NEW：带 trace 的职业计算（用于 debug）
-import {
-  computeCareerDevelopmentWithTrace,
-  type CareerDebugTrace,
-} from "@/lib/career/careerEngine";
+import { computeCareerDevelopmentWithTrace, type CareerDebugTrace } from "@/lib/career/careerEngine";
 
 type Props = { id: string };
-type Mode = "career" | "base";
+type Mode = "score" | "career" | "base";
 
 /** ✅ 修复报错：安全提取文字内容 */
 function pickImpactText(x: any): string {
@@ -28,8 +26,9 @@ function pickImpactText(x: any): string {
 export function ReportClient({ id }: Props) {
   const [loadingChart, setLoadingChart] = useState(true);
   const [keyConfig, setKeyConfig] = useState<any>(null);
+  const [score, setScore] = useState<any>(null);
   const [chartError, setChartError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<Mode>("base");
+  const [activeTab, setActiveTab] = useState<Mode>("base"); // 测试期你可以默认 "score"
 
   // ✅【职业数据流】把后端 planets 规范化成 placements（body/sign/house）
   const placements = useMemo(() => {
@@ -42,18 +41,13 @@ export function ReportClient({ id }: Props) {
     }
   }, [keyConfig]);
 
-  // ✅【CareerTab 需要的 items】ExplainItem[]
   const explainItems = useMemo(() => {
     const items = buildExplainItems(placements);
-    console.log("🚀 [Career] ExplainItems:", items);
     return items;
   }, [placements]);
 
-  // ✅ NEW：【职业发展 + debug trace】一套算出来
   const careerPack = useMemo(() => {
     const pack = computeCareerDevelopmentWithTrace(placements);
-    console.log("🚀 [Career] CareerDev:", pack.output);
-    console.log("🧪 [Career] CareerTrace:", pack.trace);
     return pack;
   }, [placements]);
 
@@ -64,11 +58,16 @@ export function ReportClient({ id }: Props) {
     (async () => {
       try {
         setLoadingChart(true);
-        const r = await fetch(`/api/chart?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+
+        // ✅ 这里你可以加 ?trace=1，让后端返回完整计算过程（见 engine 修改）
+        const r = await fetch(`/api/chart?id=${encodeURIComponent(id)}&trace=1`, { cache: "no-store" });
         const j = await r.json();
+
         setKeyConfig(j?.keyConfig ?? j);
+        setScore(j?.score ?? null);
       } catch (e: any) {
         setChartError("加载星盘数据失败");
+        setScore(null);
       } finally {
         setLoadingChart(false);
       }
@@ -125,7 +124,6 @@ export function ReportClient({ id }: Props) {
   if (loadingChart)
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-[#050505] text-white">
-        {/* Loader2 was missing - using a simple spinner as a placeholder */}
         <div className="animate-spin rounded-full border-4 border-indigo-500 border-t-transparent w-10 h-10 mb-4" />
         <p className="text-sm font-black tracking-[0.4em] text-white/40 uppercase font-data">
           System Decoding...
@@ -156,7 +154,6 @@ export function ReportClient({ id }: Props) {
           <div className="flex flex-col md:flex-row justify-between items-end gap-8 bg-white/[0.02] border border-white/5 p-10 rounded-[40px] backdrop-blur-md relative overflow-hidden">
             <div className="space-y-5 relative z-10">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-black text-indigo-400 uppercase tracking-widest font-data">
-                {/* Replaced missing Fingerprint icon with emoji as placeholder */}
                 <span role="img" aria-label="fingerprint">📝</span> Registry / 灵魂登记
               </div>
               <h1 className="text-6xl font-black tracking-tighter text-white font-heading">
@@ -198,8 +195,19 @@ export function ReportClient({ id }: Props) {
           </div>
         </section>
 
-        {/* 2. 主导航切换按钮 */}
+        {/* 2. 主导航切换按钮（评分系统在最左） */}
         <nav className="flex justify-center gap-8 py-6 relative z-10">
+          <button
+            onClick={() => setActiveTab("score")}
+            className={`flex items-center gap-3 px-12 py-5 rounded-[24px] font-bold transition-all duration-500 font-heading tracking-tight ${
+              activeTab === "score"
+                ? "bg-indigo-600 text-white scale-105 shadow-[0_20px_50px_-10px_rgba(79,70,229,0.5)]"
+                : "bg-white/5 text-white/30 hover:bg-white/10"
+            }`}
+          >
+            <span role="img" aria-label="chart">📊</span> 评分系统
+          </button>
+
           <button
             onClick={() => setActiveTab("base")}
             className={`flex items-center gap-3 px-12 py-5 rounded-[24px] font-bold transition-all duration-500 font-heading tracking-tight ${
@@ -210,6 +218,7 @@ export function ReportClient({ id }: Props) {
           >
             <span role="img" aria-label="sparkles">✨</span> 基础星盘科普
           </button>
+
           <button
             onClick={() => setActiveTab("career")}
             className={`flex items-center gap-3 px-12 py-5 rounded-[24px] font-bold transition-all duration-500 font-heading tracking-tight ${
@@ -226,8 +235,11 @@ export function ReportClient({ id }: Props) {
         <div className="mt-8">
           {activeTab === "career" ? (
             <div className="animate-in fade-in slide-in-from-right-10 duration-1000">
-              {/* careerTrace（用于 debug）仅在需要时传递 */}
               <CareerTab items={explainItems as any} careerDev={careerDev} careerTrace={careerTrace} />
+            </div>
+          ) : activeTab === "score" ? (
+            <div className="animate-in fade-in slide-in-from-left-10 duration-1000">
+              <ScorePanel score={score} title="计算过程 Debug View" />
             </div>
           ) : (
             <div className="space-y-24 animate-in fade-in slide-in-from-bottom-10 duration-1000">
@@ -269,10 +281,9 @@ export function ReportClient({ id }: Props) {
                       <div className="lg:col-span-8 rounded-[48px] border border-white/10 bg-[#08080A] p-10 md:p-14 relative overflow-hidden group-hover:border-indigo-500/30 transition-all shadow-2xl ring-1 ring-white/5">
                         <div className="relative z-10">
                           <div className="text-[11px] font-data uppercase text-indigo-400 tracking-[0.4em] mb-10 flex items-center gap-3">
-                            {/* Fixed: Import or inline icon instead of undefined Terminal */}
                             <svg width={14} height={14} viewBox="0 0 24 24" fill="none" className="text-indigo-500" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M4 17L10 11L4 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                              <rect x="12" y="19" width="8" height="2" rx="1" fill="currentColor"/>
+                              <path d="M4 17L10 11L4 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              <rect x="12" y="19" width="8" height="2" rx="1" fill="currentColor" />
                             </svg>
                             Soul_Architecture_Deep_Dive
                           </div>
@@ -280,31 +291,23 @@ export function ReportClient({ id }: Props) {
                           <div className="max-h-[600px] overflow-y-auto pr-8 custom-scrollbar">
                             <div className="space-y-10">
                               {impactText.split("\n").map((line, i) => {
-                                if (!line.trim()) return <div key={i} className="h-4" />;
+                                if (!line.trim()) return <div key={`empty-${key}-${i}`} className="h-4" />;
 
-                                if (
-                                  line.includes("【") ||
-                                  line.includes("🧾") ||
-                                  line.includes("♈") ||
-                                  line.includes("🏠") ||
-                                  line.includes("🧠")
-                                ) {
+                                if (line.includes("【") || line.includes("🧾") || line.includes("♈") || line.includes("🏠") || line.includes("🧠")) {
                                   return (
                                     <h4
-                                      key={i}
+                                      key={`h4-${key}-${i}`}
                                       className="text-2xl font-black text-white mt-12 mb-6 font-heading flex items-center gap-3 tracking-tight border-b border-white/5 pb-4 first:mt-0"
                                     >
                                       <span className="w-1.5 h-6 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,1)]" />
-                                      {line
-                                        .replace(/【|】|📍|🧾|♈|🏠|🧠/g, "")
-                                        .trim()}
+                                      {line.replace(/【|】|📍|🧾|♈|🏠|🧠/g, "").trim()}
                                     </h4>
                                   );
                                 }
 
                                 if (/^\d+/.test(line.trim())) {
                                   return (
-                                    <div key={i} className="flex gap-6 py-2 group/line">
+                                    <div key={`li-${key}-${i}`} className="flex gap-6 py-2 group/line">
                                       <span className="font-data text-4xl text-indigo-500/40 font-black group-hover/line:text-indigo-400 transition-colors shrink-0">
                                         {line.trim().charAt(0).padStart(2, "0")}
                                       </span>
@@ -317,7 +320,7 @@ export function ReportClient({ id }: Props) {
 
                                 return (
                                   <p
-                                    key={i}
+                                    key={`p-${key}-${i}`}
                                     className="text-[19px] leading-[2.1] text-white/70 font-body font-light tracking-normal border-l-2 border-white/5 pl-8 ml-1 transition-colors group-hover:text-white/90"
                                   >
                                     {line}
@@ -343,7 +346,7 @@ export function ReportClient({ id }: Props) {
 
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@900&family=Plus+Jakarta+Sans:wght@300;500;700&family=EB+Garamond:italic,wght@1,500&family=Fira+Code:wght@500;700&display=swap');
-        
+
         .font-heading { font-family: 'Outfit', sans-serif; }
         .font-body { font-family: 'Plus Jakarta Sans', sans-serif; }
         .font-archive { font-family: 'EB Garamond', serif; }
@@ -351,14 +354,14 @@ export function ReportClient({ id }: Props) {
 
         .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { 
-          background: linear-gradient(to bottom, #6366f1, transparent); 
-          border-radius: 10px; 
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: linear-gradient(to bottom, #6366f1, transparent);
+          border-radius: 10px;
         }
         .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #818cf8; }
-        
+
         p, div, h1, h3, h4 { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
       `}</style>
     </div>
   );
-} 
+}

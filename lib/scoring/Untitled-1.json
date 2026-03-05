@@ -1,0 +1,822 @@
+{
+  "version": "v1.0",
+  "__doc": {
+    "purpose": "星盘评分引擎配置（Trait22 + Node脚本NSV8 + Domain），用于读取 keyConfig.coreFull.planets / raw.bodies.lon 计算分数与证据链",
+    "notes": [
+      "Rel: 行星->Trait相关度(0~1) 决定谁负责该能力",
+      "Alpha: Trait对星座能量向量(SEV)的线性系数，SignAdj clamp到[-0.15,+0.15]",
+      "HouseAct: 宫位对Trait的激活(0~0.40)，用于(1+HouseAct)乘到行星贡献",
+      "Aspects: 从lon计算相位，w(type,orb)=base*(1-orb/allowedOrb)，再乘PairEffect并带sign(type)",
+      "NSV: 交点脚本8维，用交点相位强度NAS + 宫位触发 + Trait稳定系统生成"
+    ]
+  },
+
+  "bodies": {
+    "__doc": "你代码里的代号对齐（chartToKeyConfig 推入 planets[] 的 body 字段）",
+    "list": [
+      "Sun",
+      "Moon",
+      "Mercury",
+      "Venus",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Uranus",
+      "Neptune",
+      "Pluto",
+      "NorthNode",
+      "SouthNode",
+      "ASC",
+      "MC"
+    ],
+    "node": {
+      "northKey": "NorthNode",
+      "southKey": "SouthNode",
+      "swephTrueNodeKeys": ["TrueNode_North", "TrueNode_South"]
+    }
+  },
+
+  "weights": {
+    "planetBaseWeight_PW": {
+      "Sun": 1.0,
+      "Moon": 0.95,
+      "Mercury": 0.9,
+      "Venus": 0.85,
+      "Mars": 0.9,
+      "Jupiter": 0.8,
+      "Saturn": 0.85,
+      "Uranus": 0.7,
+      "Neptune": 0.65,
+      "Pluto": 0.75,
+
+      "__doc_nodes": "交点主要用于脚本(NSV)，Trait层可设为0或极低；如果你希望Trait也被交点影响，可在Rel矩阵里给小值",
+      "NorthNode": 1.1,
+      "SouthNode": 1.2,
+
+      "__doc_angles": "轴点（ASC/MC）建议只用于Domain/显性修正；Trait层如要用可给0.6左右",
+      "ASC": 0.6,
+      "MC": 0.6
+    },
+
+    "repetitionFactor": {
+      "__doc": "同一宫位内(含节点/角度可选) >=2 个点位时，对该宫位内所有点位贡献乘该系数",
+      "enabled": true,
+      "minCountInHouse": 2,
+      "factor": 1.25,
+      "includeBodies": [
+        "Sun",
+        "Moon",
+        "Mercury",
+        "Venus",
+        "Mars",
+        "Jupiter",
+        "Saturn",
+        "Uranus",
+        "Neptune",
+        "Pluto",
+        "NorthNode",
+        "SouthNode"
+      ]
+    }
+  },
+
+  "sev_signEnergyVector": {
+    "__doc": "星座能量向量生成（理论推导版）。输入：元素/模式/阴阳 -> 输出 4维 SEV。注意：你前端传入的是中文星座名(SIGNS_ZH)，这里做映射。",
+    "signNameToKey": {
+      "白羊": "Aries",
+      "金牛": "Taurus",
+      "双子": "Gemini",
+      "巨蟹": "Cancer",
+      "狮子": "Leo",
+      "处女": "Virgo",
+      "天秤": "Libra",
+      "天蝎": "Scorpio",
+      "射手": "Sagittarius",
+      "摩羯": "Capricorn",
+      "水瓶": "Aquarius",
+      "双鱼": "Pisces"
+    },
+    "signMeta": {
+      "Aries": { "element": "Fire", "mode": "Cardinal", "polarity": "Yang" },
+      "Taurus": { "element": "Earth", "mode": "Fixed", "polarity": "Yin" },
+      "Gemini": { "element": "Air", "mode": "Mutable", "polarity": "Yang" },
+      "Cancer": { "element": "Water", "mode": "Cardinal", "polarity": "Yin" },
+      "Leo": { "element": "Fire", "mode": "Fixed", "polarity": "Yang" },
+      "Virgo": { "element": "Earth", "mode": "Mutable", "polarity": "Yin" },
+      "Libra": { "element": "Air", "mode": "Cardinal", "polarity": "Yang" },
+      "Scorpio": { "element": "Water", "mode": "Fixed", "polarity": "Yin" },
+      "Sagittarius": { "element": "Fire", "mode": "Mutable", "polarity": "Yang" },
+      "Capricorn": { "element": "Earth", "mode": "Cardinal", "polarity": "Yin" },
+      "Aquarius": { "element": "Air", "mode": "Fixed", "polarity": "Yang" },
+      "Pisces": { "element": "Water", "mode": "Mutable", "polarity": "Yin" }
+    },
+    "elementVector": {
+      "Fire": { "initiative": 0.35, "stability": 0.05, "abstraction": 0.0, "intensity": 0.3 },
+      "Earth": { "initiative": 0.05, "stability": 0.4, "abstraction": 0.0, "intensity": 0.1 },
+      "Air": { "initiative": 0.1, "stability": 0.05, "abstraction": 0.45, "intensity": 0.0 },
+      "Water": { "initiative": 0.0, "stability": 0.1, "abstraction": 0.0, "intensity": 0.5 }
+    },
+    "modeVector": {
+      "Cardinal": { "initiative": 0.4, "stability": 0.0, "abstraction": 0.0, "intensity": 0.0 },
+      "Fixed": { "initiative": 0.0, "stability": 0.45, "abstraction": 0.0, "intensity": 0.0 },
+      "Mutable": { "initiative": 0.1, "stability": 0.0, "abstraction": 0.45, "intensity": 0.0 }
+    },
+    "polarityVector": {
+      "Yang": { "initiative": 0.4, "stability": 0.0, "abstraction": 0.0, "intensity": 0.0 },
+      "Yin": { "initiative": 0.0, "stability": 0.0, "abstraction": 0.0, "intensity": 0.4 }
+    },
+    "sevClamp": { "min": -1.0, "max": 1.0 }
+  },
+
+  "traits": {
+    "__doc": "Trait 22维定义（中文名+英文Key）",
+    "list": [
+      { "key": "DecisionSpeed", "zh": "决策速度" },
+      { "key": "DecisionConfidence", "zh": "决策确定性" },
+      { "key": "AnalyticalDepth", "zh": "分析深度" },
+      { "key": "SystemsThinking", "zh": "系统思维" },
+      { "key": "ExecutionDrive", "zh": "执行推进" },
+      { "key": "Adaptability", "zh": "适应迭代" },
+      { "key": "DisciplineRoutine", "zh": "纪律日常" },
+
+      { "key": "EmotionalSensitivity", "zh": "情绪敏感" },
+      { "key": "EmotionalRegulation", "zh": "情绪稳定" },
+      { "key": "StressTolerance", "zh": "抗压能力" },
+      { "key": "RecoveryNeed", "zh": "恢复/独处需求" },
+      { "key": "SelfTrust", "zh": "自我信任" },
+      { "key": "MeaningDrive", "zh": "意义驱动" },
+
+      { "key": "AttachmentSecurityNeed", "zh": "依附安全需求" },
+      { "key": "ReciprocityFairness", "zh": "对等公平" },
+      { "key": "BoundaryStrength", "zh": "边界强度" },
+      { "key": "WarmthNurturance", "zh": "温暖照料" },
+      { "key": "InfluenceNegotiation", "zh": "影响力/谈判" },
+
+      { "key": "RiskAppetite", "zh": "风险偏好" },
+      { "key": "RiskControl", "zh": "风控能力" },
+      { "key": "ValueStability", "zh": "价值稳定" },
+      { "key": "PowerIntensityDrive", "zh": "强度/深水驱动" }
+    ]
+  },
+
+  "A1_rel_PlanetToTrait": {
+    "__doc": "Rel(p,t)：行星对Trait相关度(0~1)。仅10大行星（节点在脚本层，角度建议在Domain层）。",
+    "planets": ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"],
+    "matrix": {
+      "DecisionSpeed":       { "Sun": 0.35, "Moon": 0.15, "Mercury": 0.55, "Venus": 0.05, "Mars": 0.85, "Jupiter": 0.15, "Saturn": 0.25, "Uranus": 0.30, "Neptune": 0.05, "Pluto": 0.20 },
+      "DecisionConfidence":  { "Sun": 0.85, "Moon": 0.35, "Mercury": 0.55, "Venus": 0.10, "Mars": 0.15, "Jupiter": 0.35, "Saturn": 0.55, "Uranus": 0.10, "Neptune": 0.15, "Pluto": 0.25 },
+      "AnalyticalDepth":     { "Sun": 0.15, "Moon": 0.10, "Mercury": 0.90, "Venus": 0.05, "Mars": 0.15, "Jupiter": 0.20, "Saturn": 0.45, "Uranus": 0.10, "Neptune": 0.25, "Pluto": 0.25 },
+      "SystemsThinking":     { "Sun": 0.20, "Moon": 0.05, "Mercury": 0.75, "Venus": 0.05, "Mars": 0.10, "Jupiter": 0.25, "Saturn": 0.55, "Uranus": 0.25, "Neptune": 0.20, "Pluto": 0.20 },
+      "ExecutionDrive":      { "Sun": 0.30, "Moon": 0.10, "Mercury": 0.15, "Venus": 0.05, "Mars": 0.85, "Jupiter": 0.25, "Saturn": 0.70, "Uranus": 0.20, "Neptune": 0.05, "Pluto": 0.25 },
+      "Adaptability":        { "Sun": 0.15, "Moon": 0.10, "Mercury": 0.20, "Venus": 0.05, "Mars": 0.25, "Jupiter": 0.35, "Saturn": 0.15, "Uranus": 0.85, "Neptune": 0.20, "Pluto": 0.20 },
+      "DisciplineRoutine":   { "Sun": 0.25, "Moon": 0.10, "Mercury": 0.15, "Venus": 0.05, "Mars": 0.25, "Jupiter": 0.10, "Saturn": 0.90, "Uranus": 0.05, "Neptune": 0.05, "Pluto": 0.20 },
+
+      "EmotionalSensitivity":{ "Sun": 0.10, "Moon": 0.90, "Mercury": 0.10, "Venus": 0.20, "Mars": 0.10, "Jupiter": 0.10, "Saturn": 0.15, "Uranus": 0.10, "Neptune": 0.80, "Pluto": 0.25 },
+      "EmotionalRegulation": { "Sun": 0.25, "Moon": 0.55, "Mercury": 0.10, "Venus": 0.10, "Mars": 0.10, "Jupiter": 0.05, "Saturn": 0.75, "Uranus": 0.10, "Neptune": 0.25, "Pluto": 0.35 },
+      "StressTolerance":     { "Sun": 0.20, "Moon": 0.25, "Mercury": 0.10, "Venus": 0.05, "Mars": 0.20, "Jupiter": 0.10, "Saturn": 0.75, "Uranus": 0.20, "Neptune": 0.10, "Pluto": 0.60 },
+      "RecoveryNeed":        { "Sun": 0.10, "Moon": 0.70, "Mercury": 0.10, "Venus": 0.10, "Mars": 0.05, "Jupiter": 0.05, "Saturn": 0.15, "Uranus": 0.10, "Neptune": 0.55, "Pluto": 0.20 },
+      "SelfTrust":           { "Sun": 0.80, "Moon": 0.35, "Mercury": 0.20, "Venus": 0.10, "Mars": 0.15, "Jupiter": 0.20, "Saturn": 0.35, "Uranus": 0.10, "Neptune": 0.20, "Pluto": 0.25 },
+      "MeaningDrive":        { "Sun": 0.65, "Moon": 0.25, "Mercury": 0.15, "Venus": 0.10, "Mars": 0.10, "Jupiter": 0.75, "Saturn": 0.15, "Uranus": 0.20, "Neptune": 0.60, "Pluto": 0.20 },
+
+      "AttachmentSecurityNeed":{ "Sun": 0.10, "Moon": 0.75, "Mercury": 0.05, "Venus": 0.55, "Mars": 0.10, "Jupiter": 0.05, "Saturn": 0.35, "Uranus": 0.10, "Neptune": 0.25, "Pluto": 0.20 },
+      "ReciprocityFairness": { "Sun": 0.05, "Moon": 0.10, "Mercury": 0.20, "Venus": 0.85, "Mars": 0.05, "Jupiter": 0.10, "Saturn": 0.20, "Uranus": 0.05, "Neptune": 0.10, "Pluto": 0.10 },
+      "BoundaryStrength":    { "Sun": 0.15, "Moon": 0.20, "Mercury": 0.10, "Venus": 0.25, "Mars": 0.25, "Jupiter": 0.05, "Saturn": 0.75, "Uranus": 0.20, "Neptune": 0.10, "Pluto": 0.55 },
+      "WarmthNurturance":    { "Sun": 0.05, "Moon": 0.75, "Mercury": 0.05, "Venus": 0.55, "Mars": 0.05, "Jupiter": 0.10, "Saturn": 0.10, "Uranus": 0.05, "Neptune": 0.35, "Pluto": 0.10 },
+      "InfluenceNegotiation":{ "Sun": 0.20, "Moon": 0.05, "Mercury": 0.70, "Venus": 0.30, "Mars": 0.30, "Jupiter": 0.55, "Saturn": 0.15, "Uranus": 0.10, "Neptune": 0.15, "Pluto": 0.10 },
+
+      "RiskAppetite":        { "Sun": 0.10, "Moon": 0.05, "Mercury": 0.05, "Venus": 0.05, "Mars": 0.55, "Jupiter": 0.65, "Saturn": 0.25, "Uranus": 0.35, "Neptune": 0.05, "Pluto": 0.75 },
+      "RiskControl":         { "Sun": 0.10, "Moon": 0.05, "Mercury": 0.20, "Venus": 0.05, "Mars": 0.20, "Jupiter": 0.10, "Saturn": 0.85, "Uranus": 0.10, "Neptune": 0.05, "Pluto": 0.35 },
+      "ValueStability":      { "Sun": 0.35, "Moon": 0.10, "Mercury": 0.05, "Venus": 0.55, "Mars": 0.05, "Jupiter": 0.10, "Saturn": 0.45, "Uranus": 0.05, "Neptune": 0.05, "Pluto": 0.50 },
+      "PowerIntensityDrive": { "Sun": 0.10, "Moon": 0.15, "Mercury": 0.05, "Venus": 0.25, "Mars": 0.35, "Jupiter": 0.10, "Saturn": 0.30, "Uranus": 0.15, "Neptune": 0.10, "Pluto": 0.85 }
+    }
+  },
+
+  "A2_alpha_TraitToSEV": {
+    "__doc": "Alpha(trait) = [a_i,a_s,a_a,a_n] 分别乘 initiative/stability/abstraction/intensity，用于 SignAdj clamp[-0.15,+0.15]",
+    "clamp": { "min": -0.15, "max": 0.15 },
+    "alpha": {
+      "DecisionSpeed":        [0.50, -0.25, 0.10, 0.10],
+      "DecisionConfidence":   [-0.10, 0.45, -0.05, 0.10],
+      "AnalyticalDepth":      [0.05, 0.25, 0.55, 0.05],
+      "SystemsThinking":      [0.05, 0.35, 0.40, 0.00],
+      "ExecutionDrive":       [0.35, 0.35, 0.00, 0.10],
+      "Adaptability":         [0.10, -0.10, 0.30, 0.00],
+      "DisciplineRoutine":    [-0.05, 0.60, -0.05, 0.00],
+
+      "EmotionalSensitivity": [-0.05, -0.10, 0.45, 0.55],
+      "EmotionalRegulation":  [-0.10, 0.65, -0.20, -0.10],
+      "StressTolerance":      [-0.05, 0.55, -0.10, 0.10],
+      "RecoveryNeed":         [-0.10, 0.00, 0.25, 0.35],
+      "SelfTrust":            [0.00, 0.35, -0.10, 0.10],
+      "MeaningDrive":         [0.05, 0.00, 0.45, 0.10],
+
+      "AttachmentSecurityNeed":[-0.15, 0.55, 0.10, 0.10],
+      "ReciprocityFairness":  [0.05, 0.10, 0.35, 0.00],
+      "BoundaryStrength":     [-0.05, 0.50, -0.10, 0.25],
+      "WarmthNurturance":     [-0.10, 0.10, 0.15, 0.35],
+      "InfluenceNegotiation": [0.25, 0.10, 0.35, 0.00],
+
+      "RiskAppetite":         [0.45, -0.30, 0.10, 0.35],
+      "RiskControl":          [-0.10, 0.70, 0.10, -0.10],
+      "ValueStability":       [-0.10, 0.60, -0.05, 0.10],
+      "PowerIntensityDrive":  [0.10, 0.05, 0.00, 0.85]
+    }
+  },
+
+  "A3_pairEffect_Trait": {
+    "__doc": "PairEffect(pair,trait) ∈ [-0.6,+0.6]。实际相位贡献= w(type,orb)*pairEffect*sign(type)。这里只放“语义强度”，不含orb与相位类型。",
+    "pairs": [
+      "Moon-Saturn","Moon-Venus","Moon-Mars","Venus-Saturn","Venus-Pluto","Moon-Neptune",
+      "Moon-Pluto","Moon-Uranus","Venus-Neptune","Venus-Uranus","Saturn-Neptune",
+      "Mercury-Saturn","Mercury-Mars","Mercury-Neptune","Mercury-Jupiter","Mercury-Pluto",
+      "Mercury-Uranus","Mercury-Venus",
+      "Mars-Saturn","Mars-Jupiter","Mars-Uranus","Mars-Neptune","Mars-Pluto","Mars-Venus",
+      "Saturn-Pluto","Jupiter-Pluto","Venus-Jupiter",
+      "Sun-Pluto","Sun-Saturn","Sun-Jupiter","Sun-Moon","Sun-Mars","Sun-Neptune","Sun-Uranus",
+      "Moon-Jupiter","Jupiter-Saturn","Jupiter-Neptune","Uranus-Pluto","Neptune-Pluto","Venus-Mercury"
+    ],
+    "effects": {
+      "Moon-Saturn": {
+        "EmotionalRegulation": 0.6,
+        "StressTolerance": 0.45,
+        "WarmthNurturance": -0.35,
+        "AttachmentSecurityNeed": 0.25
+      },
+      "Moon-Venus": {
+        "WarmthNurturance": 0.5,
+        "AttachmentSecurityNeed": 0.35,
+        "EmotionalSensitivity": 0.25
+      },
+      "Moon-Mars": {
+        "EmotionalRegulation": -0.5,
+        "DecisionSpeed": 0.25,
+        "BoundaryStrength": -0.25
+      },
+      "Venus-Saturn": {
+        "BoundaryStrength": 0.55,
+        "AttachmentSecurityNeed": 0.25,
+        "WarmthNurturance": -0.30,
+        "ReciprocityFairness": 0.15
+      },
+      "Venus-Pluto": {
+        "PowerIntensityDrive": 0.6,
+        "EmotionalSensitivity": 0.25,
+        "BoundaryStrength": -0.25
+      },
+      "Moon-Neptune": {
+        "EmotionalSensitivity": 0.6,
+        "EmotionalRegulation": -0.35,
+        "SelfTrust": -0.20,
+        "RecoveryNeed": 0.20
+      },
+
+      "Mercury-Saturn": {
+        "AnalyticalDepth": 0.55,
+        "SystemsThinking": 0.55,
+        "DecisionConfidence": 0.35,
+        "DecisionSpeed": -0.25
+      },
+      "Mercury-Mars": {
+        "DecisionSpeed": 0.35,
+        "InfluenceNegotiation": 0.30,
+        "StressTolerance": -0.20
+      },
+      "Mercury-Neptune": {
+        "AnalyticalDepth": -0.45,
+        "MeaningDrive": 0.25,
+        "EmotionalSensitivity": 0.20
+      },
+      "Mercury-Jupiter": {
+        "MeaningDrive": 0.30,
+        "InfluenceNegotiation": 0.30,
+        "Adaptability": 0.25
+      },
+      "Mercury-Pluto": {
+        "AnalyticalDepth": 0.55,
+        "PowerIntensityDrive": 0.20,
+        "BoundaryStrength": 0.15
+      },
+
+      "Mars-Saturn": {
+        "ExecutionDrive": 0.55,
+        "RiskControl": 0.35,
+        "DecisionSpeed": -0.20
+      },
+      "Mars-Uranus": {
+        "DecisionSpeed": 0.55,
+        "Adaptability": 0.35,
+        "RiskControl": -0.25
+      },
+      "Mars-Pluto": {
+        "RiskAppetite": 0.45,
+        "PowerIntensityDrive": 0.55,
+        "StressTolerance": 0.20
+      },
+
+      "Saturn-Pluto": {
+        "StressTolerance": 0.60,
+        "RiskControl": 0.55,
+        "EmotionalRegulation": 0.25
+      },
+      "Jupiter-Pluto": {
+        "RiskAppetite": 0.35,
+        "MeaningDrive": 0.25,
+        "PowerIntensityDrive": 0.25
+      },
+      "Sun-Moon": {
+        "SelfTrust": 0.35,
+        "EmotionalRegulation": 0.25,
+        "DecisionConfidence": -0.35
+      },
+      "Sun-Saturn": {
+        "DisciplineRoutine": 0.45,
+        "DecisionConfidence": 0.25,
+        "SelfTrust": -0.20
+      },
+      "Sun-Jupiter": {
+        "MeaningDrive": 0.45,
+        "DecisionConfidence": 0.20,
+        "RiskAppetite": 0.15
+      }
+    }
+  },
+
+  "A4_houseAct_Trait": {
+    "__doc": "HouseAct(h,t) ∈ [0.00,0.40]。用于Trait行星贡献项：(1+HouseAct) 乘到 C_{p,t}。宫位不增加能力本体，只放大该能力在该场域被调用的频率/显性。",
+    "range": { "min": 0.0, "max": 0.4 },
+    "matrixEmbedded": true,
+    "traitsOrder": [
+      "DecisionSpeed",
+      "DecisionConfidence",
+      "AnalyticalDepth",
+      "SystemsThinking",
+      "ExecutionDrive",
+      "Adaptability",
+      "DisciplineRoutine",
+      "EmotionalSensitivity",
+      "EmotionalRegulation",
+      "StressTolerance",
+      "RecoveryNeed",
+      "SelfTrust",
+      "MeaningDrive",
+      "AttachmentSecurityNeed",
+      "ReciprocityFairness",
+      "BoundaryStrength",
+      "WarmthNurturance",
+      "InfluenceNegotiation",
+      "RiskAppetite",
+      "RiskControl",
+      "ValueStability",
+      "PowerIntensityDrive"
+    ],
+    "matrix": {
+      "1": {
+        "DecisionSpeed": 0.20,
+        "DecisionConfidence": 0.25,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.15,
+        "Adaptability": 0.10,
+        "DisciplineRoutine": 0.05,
+        "EmotionalSensitivity": 0.10,
+        "EmotionalRegulation": 0.05,
+        "StressTolerance": 0.10,
+        "RecoveryNeed": 0.00,
+        "SelfTrust": 0.25,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.05,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.15,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.10,
+        "RiskAppetite": 0.10,
+        "RiskControl": 0.05,
+        "ValueStability": 0.05,
+        "PowerIntensityDrive": 0.10
+      },
+      "2": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.10,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.10,
+        "EmotionalSensitivity": 0.05,
+        "EmotionalRegulation": 0.05,
+        "StressTolerance": 0.10,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.10,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.05,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.10,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.05,
+        "RiskAppetite": 0.20,
+        "RiskControl": 0.20,
+        "ValueStability": 0.40,
+        "PowerIntensityDrive": 0.20
+      },
+      "3": {
+        "DecisionSpeed": 0.15,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.35,
+        "SystemsThinking": 0.20,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.15,
+        "DisciplineRoutine": 0.05,
+        "EmotionalSensitivity": 0.05,
+        "EmotionalRegulation": 0.05,
+        "StressTolerance": 0.05,
+        "RecoveryNeed": 0.00,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.00,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.05,
+        "WarmthNurturance": 0.00,
+        "InfluenceNegotiation": 0.30,
+        "RiskAppetite": 0.05,
+        "RiskControl": 0.10,
+        "ValueStability": 0.00,
+        "PowerIntensityDrive": 0.05
+      },
+      "4": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.10,
+        "AnalyticalDepth": 0.00,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.05,
+        "EmotionalSensitivity": 0.25,
+        "EmotionalRegulation": 0.20,
+        "StressTolerance": 0.15,
+        "RecoveryNeed": 0.30,
+        "SelfTrust": 0.10,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.35,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.10,
+        "WarmthNurturance": 0.30,
+        "InfluenceNegotiation": 0.00,
+        "RiskAppetite": 0.05,
+        "RiskControl": 0.10,
+        "ValueStability": 0.25,
+        "PowerIntensityDrive": 0.05
+      },
+      "5": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.00,
+        "SystemsThinking": 0.00,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.00,
+        "EmotionalSensitivity": 0.25,
+        "EmotionalRegulation": 0.05,
+        "StressTolerance": 0.05,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.10,
+        "AttachmentSecurityNeed": 0.20,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.05,
+        "WarmthNurturance": 0.35,
+        "InfluenceNegotiation": 0.05,
+        "RiskAppetite": 0.10,
+        "RiskControl": 0.00,
+        "ValueStability": 0.05,
+        "PowerIntensityDrive": 0.10
+      },
+      "6": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.10,
+        "SystemsThinking": 0.15,
+        "ExecutionDrive": 0.25,
+        "Adaptability": 0.10,
+        "DisciplineRoutine": 0.40,
+        "EmotionalSensitivity": 0.05,
+        "EmotionalRegulation": 0.20,
+        "StressTolerance": 0.20,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.00,
+        "AttachmentSecurityNeed": 0.05,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.15,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.05,
+        "RiskAppetite": 0.00,
+        "RiskControl": 0.20,
+        "ValueStability": 0.10,
+        "PowerIntensityDrive": 0.00
+      },
+      "7": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.05,
+        "EmotionalSensitivity": 0.15,
+        "EmotionalRegulation": 0.10,
+        "StressTolerance": 0.10,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.35,
+        "ReciprocityFairness": 0.35,
+        "BoundaryStrength": 0.30,
+        "WarmthNurturance": 0.20,
+        "InfluenceNegotiation": 0.20,
+        "RiskAppetite": 0.05,
+        "RiskControl": 0.10,
+        "ValueStability": 0.05,
+        "PowerIntensityDrive": 0.15
+      },
+      "8": {
+        "DecisionSpeed": 0.10,
+        "DecisionConfidence": 0.10,
+        "AnalyticalDepth": 0.10,
+        "SystemsThinking": 0.10,
+        "ExecutionDrive": 0.10,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.10,
+        "EmotionalSensitivity": 0.15,
+        "EmotionalRegulation": 0.15,
+        "StressTolerance": 0.25,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.10,
+        "MeaningDrive": 0.05,
+        "AttachmentSecurityNeed": 0.20,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.35,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.10,
+        "RiskAppetite": 0.35,
+        "RiskControl": 0.30,
+        "ValueStability": 0.10,
+        "PowerIntensityDrive": 0.40
+      },
+      "9": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.10,
+        "SystemsThinking": 0.10,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.15,
+        "DisciplineRoutine": 0.00,
+        "EmotionalSensitivity": 0.05,
+        "EmotionalRegulation": 0.00,
+        "StressTolerance": 0.05,
+        "RecoveryNeed": 0.00,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.35,
+        "AttachmentSecurityNeed": 0.00,
+        "ReciprocityFairness": 0.00,
+        "BoundaryStrength": 0.00,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.15,
+        "RiskAppetite": 0.20,
+        "RiskControl": 0.05,
+        "ValueStability": 0.00,
+        "PowerIntensityDrive": 0.05
+      },
+      "10": {
+        "DecisionSpeed": 0.10,
+        "DecisionConfidence": 0.25,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.10,
+        "ExecutionDrive": 0.20,
+        "Adaptability": 0.10,
+        "DisciplineRoutine": 0.20,
+        "EmotionalSensitivity": 0.00,
+        "EmotionalRegulation": 0.10,
+        "StressTolerance": 0.20,
+        "RecoveryNeed": 0.00,
+        "SelfTrust": 0.15,
+        "MeaningDrive": 0.10,
+        "AttachmentSecurityNeed": 0.00,
+        "ReciprocityFairness": 0.05,
+        "BoundaryStrength": 0.15,
+        "WarmthNurturance": 0.00,
+        "InfluenceNegotiation": 0.30,
+        "RiskAppetite": 0.10,
+        "RiskControl": 0.20,
+        "ValueStability": 0.10,
+        "PowerIntensityDrive": 0.05
+      },
+      "11": {
+        "DecisionSpeed": 0.05,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.05,
+        "Adaptability": 0.15,
+        "DisciplineRoutine": 0.00,
+        "EmotionalSensitivity": 0.05,
+        "EmotionalRegulation": 0.00,
+        "StressTolerance": 0.05,
+        "RecoveryNeed": 0.05,
+        "SelfTrust": 0.05,
+        "MeaningDrive": 0.15,
+        "AttachmentSecurityNeed": 0.05,
+        "ReciprocityFairness": 0.15,
+        "BoundaryStrength": 0.05,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.25,
+        "RiskAppetite": 0.10,
+        "RiskControl": 0.05,
+        "ValueStability": 0.00,
+        "PowerIntensityDrive": 0.05
+      },
+      "12": {
+        "DecisionSpeed": 0.00,
+        "DecisionConfidence": 0.05,
+        "AnalyticalDepth": 0.05,
+        "SystemsThinking": 0.05,
+        "ExecutionDrive": 0.00,
+        "Adaptability": 0.05,
+        "DisciplineRoutine": 0.00,
+        "EmotionalSensitivity": 0.35,
+        "EmotionalRegulation": 0.10,
+        "StressTolerance": 0.10,
+        "RecoveryNeed": 0.40,
+        "SelfTrust": 0.10,
+        "MeaningDrive": 0.25,
+        "AttachmentSecurityNeed": 0.10,
+        "ReciprocityFairness": 0.00,
+        "BoundaryStrength": 0.05,
+        "WarmthNurturance": 0.05,
+        "InfluenceNegotiation": 0.00,
+        "RiskAppetite": 0.05,
+        "RiskControl": 0.10,
+        "ValueStability": 0.00,
+        "PowerIntensityDrive": 0.10
+      }
+    }
+  },
+
+  "A5_normalization": {
+    "__doc": "Sigmoid标准化参数：score=100*sigmoid((raw-mu)/s)",
+    "sigmoid": { "enabled": true },
+    "default": { "mu": 1.0, "s": 0.35 },
+    "perTrait": {
+      "DecisionSpeed": { "mu": 1.0, "s": 0.35 },
+      "DecisionConfidence": { "mu": 1.05, "s": 0.35 },
+      "AnalyticalDepth": { "mu": 1.0, "s": 0.35 },
+      "SystemsThinking": { "mu": 1.0, "s": 0.35 },
+      "ExecutionDrive": { "mu": 1.0, "s": 0.40 },
+      "Adaptability": { "mu": 1.0, "s": 0.40 },
+      "DisciplineRoutine": { "mu": 1.05, "s": 0.35 },
+
+      "EmotionalSensitivity": { "mu": 1.0, "s": 0.45 },
+      "EmotionalRegulation": { "mu": 1.05, "s": 0.45 },
+      "StressTolerance": { "mu": 1.0, "s": 0.40 },
+      "RecoveryNeed": { "mu": 1.0, "s": 0.40 },
+      "SelfTrust": { "mu": 1.0, "s": 0.40 },
+      "MeaningDrive": { "mu": 1.0, "s": 0.40 },
+
+      "AttachmentSecurityNeed": { "mu": 1.0, "s": 0.45 },
+      "ReciprocityFairness": { "mu": 1.0, "s": 0.35 },
+      "BoundaryStrength": { "mu": 1.05, "s": 0.40 },
+      "WarmthNurturance": { "mu": 1.0, "s": 0.40 },
+      "InfluenceNegotiation": { "mu": 1.0, "s": 0.35 },
+
+      "RiskAppetite": { "mu": 1.0, "s": 0.40 },
+      "RiskControl": { "mu": 1.05, "s": 0.35 },
+      "ValueStability": { "mu": 1.0, "s": 0.35 },
+      "PowerIntensityDrive": { "mu": 1.0, "s": 0.45 }
+    }
+  },
+
+  "B_aspects": {
+    "__doc": "相位计算与权重，输入lon直接算出aspect列表，再进Trait/NSV/证据链",
+    "enabled": true,
+    "targets": [0, 60, 90, 120, 180],
+    "allowedOrb": { "conj": 8, "sextile": 4, "square": 6, "trine": 6, "opposition": 8 },
+    "base": { "conj": 0.35, "sextile": 0.18, "square": 0.35, "trine": 0.25, "opposition": 0.40 },
+    "signOfAspect": { "trine": 1, "sextile": 1, "square": -1, "opposition": -1, "conj": 0 },
+    "weightFormula": "w=base*(1-orb/allowedOrb)",
+    "includeBodies": ["Sun","Moon","Mercury","Venus","Mars","Jupiter","Saturn","Uranus","Neptune","Pluto","NorthNode","SouthNode"]
+  },
+
+  "nodeScript_NSV": {
+    "__doc": "交点脚本NSV8维配置",
+    "nodePairWeight": {
+      "Saturn": 1.0,
+      "Pluto": 1.0,
+      "Moon": 0.7,
+      "Venus": 0.6,
+      "Mars": 0.6,
+      "Mercury": 0.5,
+      "Jupiter": 0.4,
+      "Uranus": 0.3,
+      "Neptune": 0.3,
+      "Sun": 0.3
+    },
+    "triggerIntensityByHouse": {
+      "1": 0.3, "2": 0.8, "3": 0.4, "4": 0.6, "5": 0.4, "6": 0.3,
+      "7": 0.6, "8": 0.9, "9": 0.4, "10": 0.6, "11": 0.4, "12": 0.8
+    },
+    "formulas": {
+      "NAS": "sum(w(type,orb)*nodePairWeight(planet)) over aspects(node,planet)",
+      "FallbackStrength": "clamp(40 + 35*NAS(South) + 15*TriggerIntensity(SouthHouse),0,100)",
+      "UpgradePull": "clamp(40 + 30*NAS(North) + 20*TriggerIntensity(NorthHouse),0,100)",
+      "GrowthFriction": "clamp(35 + 40*HardAspects(North) + 15*SaturnLink(North),0,100)",
+      "RepeatLoopIndex": "100*sigmoid(0.7*Fallback + 0.5*Friction - 0.4*IntegrationAbility)",
+      "IntegrationAbility": "min(SelfTrust,BoundaryStrength,DisciplineRoutine)"
+    }
+  },
+
+  "domains": {
+    "__doc": "领域评分= W·Trait + SceneBonus + ScriptModifier。权重之和≈1。",
+    "sceneBonus": {
+      "__doc": "根据宫位/轴点触发强度额外加分（可调）",
+      "Love": { "H5": 6, "H7": 8, "H8": 10, "MC": 0, "ASC": 0 },
+      "Friendship": { "H11": 8, "H7": 4, "H3": 4 },
+      "Family": { "H4": 10, "H2": 4 },
+      "Career": { "H10": 10, "H6": 6, "MC": 8 },
+      "Investment": { "H2": 10, "H8": 10, "H11": 4 },
+      "Resilience": { "H8": 10, "H12": 10, "H4": 6 }
+    },
+    "scriptModifier": {
+      "__doc": "k*Trigger(domain,axis)*(UpgradePull-FallbackStrength)",
+      "k": 0.2
+    },
+    "weights_W": {
+      "Love": {
+        "AttachmentSecurityNeed": 0.15,
+        "WarmthNurturance": 0.12,
+        "ReciprocityFairness": 0.12,
+        "BoundaryStrength": 0.12,
+        "EmotionalSensitivity": 0.10,
+        "EmotionalRegulation": 0.10,
+        "PowerIntensityDrive": 0.10,
+        "SelfTrust": 0.07,
+        "ValueStability": 0.06,
+        "StressTolerance": 0.06
+      },
+      "Friendship": {
+        "ReciprocityFairness": 0.16,
+        "InfluenceNegotiation": 0.12,
+        "BoundaryStrength": 0.12,
+        "EmotionalRegulation": 0.10,
+        "WarmthNurturance": 0.10,
+        "Adaptability": 0.10,
+        "StressTolerance": 0.08,
+        "SelfTrust": 0.07,
+        "EmotionalSensitivity": 0.07,
+        "RecoveryNeed": -0.08
+      },
+      "Family": {
+        "WarmthNurturance": 0.18,
+        "AttachmentSecurityNeed": 0.15,
+        "EmotionalRegulation": 0.15,
+        "BoundaryStrength": 0.12,
+        "EmotionalSensitivity": 0.10,
+        "ValueStability": 0.10,
+        "RecoveryNeed": 0.10,
+        "StressTolerance": 0.10
+      },
+      "Career": {
+        "ExecutionDrive": 0.14,
+        "DecisionConfidence": 0.12,
+        "SystemsThinking": 0.12,
+        "AnalyticalDepth": 0.10,
+        "InfluenceNegotiation": 0.10,
+        "DisciplineRoutine": 0.10,
+        "Adaptability": 0.10,
+        "StressTolerance": 0.10,
+        "BoundaryStrength": 0.06,
+        "MeaningDrive": 0.06
+      },
+      "Investment": {
+        "RiskAppetite": 0.18,
+        "RiskControl": 0.18,
+        "AnalyticalDepth": 0.12,
+        "DecisionSpeed": 0.10,
+        "EmotionalRegulation": 0.10,
+        "ValueStability": 0.10,
+        "StressTolerance": 0.08,
+        "PowerIntensityDrive": 0.08,
+        "SystemsThinking": 0.06
+      },
+      "Resilience": {
+        "StressTolerance": 0.18,
+        "EmotionalRegulation": 0.18,
+        "RiskControl": 0.12,
+        "BoundaryStrength": 0.12,
+        "RecoveryNeed": 0.10,
+        "SelfTrust": 0.10,
+        "Adaptability": 0.10,
+        "EmotionalSensitivity": -0.10,
+        "PowerIntensityDrive": 0.10
+      }
+    }
+  }
+}
