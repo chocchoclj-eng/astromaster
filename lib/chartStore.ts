@@ -1,6 +1,6 @@
+
 // lib/chartStore.ts
-import fs from "fs/promises";
-import path from "path";
+import { kv } from '@vercel/kv';
 
 export type ChartRow = {
   id: string;
@@ -8,56 +8,28 @@ export type ChartRow = {
   keyConfig: any;
 };
 
-// 是否运行在 Vercel
-const isVercel = !!process.env.VERCEL;
+// 使用 Vercel KV 存储每个图表，key 的格式为 'chart:ID'
+const getKey = (id: string) => `chart:${id}`;
 
-// ✅ Vercel: 只能写 /tmp（临时）
-// ✅ 本地: 仍然使用项目目录下的 .data
-const BASE_DIR = isVercel
-  ? "/tmp"
-  : path.resolve(process.cwd(), ".data");
-
-const DB_PATH = path.join(BASE_DIR, "charts");
-const FILE_PATH = path.join(DB_PATH, "charts.json");
-
-async function ensureFile() {
-  await fs.mkdir(DB_PATH, { recursive: true });
-  try {
-    await fs.access(FILE_PATH);
-  } catch {
-    await fs.writeFile(FILE_PATH, JSON.stringify({}), "utf-8");
-  }
-}
-
-async function readAll(): Promise<Record<string, ChartRow>> {
-  await ensureFile();
-  const raw = await fs.readFile(FILE_PATH, "utf-8");
-  return JSON.parse(raw || "{}");
-}
-
-async function writeAll(all: Record<string, ChartRow>) {
-  await ensureFile();
-  await fs.writeFile(FILE_PATH, JSON.stringify(all, null, 2), "utf-8");
-}
-
-export async function saveChart(row: ChartRow) {
-  const all = await readAll();
-  all[row.id] = row;
-  await writeAll(all);
+export async function saveChart(row: ChartRow): Promise<ChartRow> {
+  if (!row.id) throw new Error("ChartRow must have an id");
+  await kv.set(getKey(row.id), row);
   return row;
 }
 
 export async function readChart(id: string): Promise<ChartRow | null> {
-  const all = await readAll();
-  return all[id] ?? null;
+  if (!id) return null;
+  const row = await kv.get<ChartRow>(getKey(id));
+  return row ?? null;
 }
 
-// ✅ 兼容你已有的 api/chart GET
+// 兼容你已有的 api/chart GET
 export async function getChart(id: string): Promise<ChartRow | null> {
   return readChart(id);
 }
 
-// 预留接口
-export async function saveDeepReport(_: any) {
+// 预留接口，目前不做任何事
+export async function saveDeepReport(_: any): Promise<void> {
+  console.log("saveDeepReport called, but is a no-op for now.");
   return;
 }
