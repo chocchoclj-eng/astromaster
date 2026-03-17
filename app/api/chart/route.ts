@@ -16,7 +16,7 @@ function getSweph() {
   return g.__SWE__;
 }
 
-const STORE_DIR = path.join(process.cwd(), ".data", "charts");
+const STORE_DIR = "/tmp/charts";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
