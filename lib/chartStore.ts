@@ -1,6 +1,5 @@
-
 // lib/chartStore.ts
-import { kv } from '@vercel/kv';
+// 使用 Upstash Redis REST API 存储数据（无需额外 SDK，直接 fetch）
 
 export type ChartRow = {
   id: string;
@@ -8,28 +7,55 @@ export type ChartRow = {
   keyConfig: any;
 };
 
-// 使用 Vercel KV 存储每个图表，key 的格式为 'chart:ID'
 const getKey = (id: string) => `chart:${id}`;
+
+async function redisCommand(command: string, ...args: string[]) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    throw new Error(
+      "Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN in environment variables."
+    );
+  }
+
+  const res = await fetch(`${url}/${command}/${args.map(encodeURIComponent).join("/")}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Upstash Redis error: ${res.status} ${text}`);
+  }
+
+  const json = await res.json();
+  return json.result;
+}
 
 export async function saveChart(row: ChartRow): Promise<ChartRow> {
   if (!row.id) throw new Error("ChartRow must have an id");
-  await kv.set(getKey(row.id), row);
+  await redisCommand("set", getKey(row.id), JSON.stringify(row));
   return row;
 }
 
 export async function readChart(id: string): Promise<ChartRow | null> {
   if (!id) return null;
-  const row = await kv.get<ChartRow>(getKey(id));
-  return row ?? null;
+  const raw = await redisCommand("get", getKey(id));
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return null;
+  }
 }
 
-// 兼容你已有的 api/chart GET
+// 兼容已有的 api/chart GET
 export async function getChart(id: string): Promise<ChartRow | null> {
   return readChart(id);
 }
 
-// 预留接口，目前不做任何事
+// 预留接口
 export async function saveDeepReport(_: any): Promise<void> {
-  console.log("saveDeepReport called, but is a no-op for now.");
   return;
 }
