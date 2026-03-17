@@ -10,12 +10,12 @@ export type ChartRow = {
 const getKey = (id: string) => `chart:${id}`;
 
 async function redisCommand(command: string, ...args: string[]) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (!url || !token) {
     throw new Error(
-      "Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN in environment variables."
+      "Missing KV_REST_API_URL or KV_REST_API_TOKEN in environment variables."
     );
   }
 
